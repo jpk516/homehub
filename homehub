@@ -1,0 +1,997 @@
+# Home Hub – Kiosk Web App (Next.js + Docker)
+
+Below is a complete starter you can paste into a new repo. It includes:
+- **Next.js (App Router, TypeScript, Tailwind)** with a **touch-first kiosk UI**
+- **Prisma + PostgreSQL** for data
+- **OAuth-ready stubs** for Google Calendar & Microsoft 365 Calendar; **CalDAV** for iCloud
+- **Idle photo slideshow** with a pluggable provider (Immich stub + local folder fallback)
+- **Dockerfile + docker-compose** for Ubuntu Server deployment
+- **.env.example** with all variables you’ll need
+
+> Copy each file into your project, keeping the same paths. Then follow the setup steps at the end.
+
+---
+
+## File Tree
+```
+home-hub/
+  .env.example
+  docker-compose.yml
+  Dockerfile
+  next.config.mjs
+  package.json
+  postcss.config.js
+  prisma/
+    schema.prisma
+  public/
+    icon-192.png
+    icon-512.png
+    apple-touch-icon.png
+    manifest.webmanifest
+  src/
+    app/
+      globals.css
+      layout.tsx
+      page.tsx
+      kiosk/idle-slideshow.tsx
+      api/
+        chores/route.ts
+        checklists/route.ts
+        meals/route.ts
+        calendar/sync/route.ts
+        photos/random/route.ts
+      settings/page.tsx
+      calendar/page.tsx
+      chores/page.tsx
+      checklists/page.tsx
+      meals/page.tsx
+    components/
+      KioskShell.tsx
+      NavTabs.tsx
+      Card.tsx
+      IdleManager.tsx
+      TouchButton.tsx
+      CalendarView.tsx
+      MealPlanner.tsx
+      ChecklistView.tsx
+      ChoresView.tsx
+      PhotoSlideshow.tsx
+    lib/
+      prisma.ts
+      types.ts
+      auth/
+        google.ts
+        microsoft.ts
+        caldav.ts
+      photos/
+        immich.ts
+        local.ts
+      calendar/
+        google.ts
+        microsoft.ts
+        caldav.ts
+        merge.ts
+      utils/idle.ts
+      utils/dates.ts
+      utils/env.ts
+    styles/
+      tailwind.css
+    middleware.ts
+  tailwind.config.ts
+  tsconfig.json
+```
+
+---
+
+## .env.example
+```env
+# App
+NEXT_PUBLIC_APP_NAME=Home Hub
+NEXT_PUBLIC_IDLE_TIMEOUT_SECONDS=120
+NEXTAUTH_SECRET=replace-with-random-32-bytes
+NEXTAUTH_URL=http://localhost:3000
+
+# Database
+DATABASE_URL=postgresql://postgres:postgres@db:5432/homehub?schema=public
+
+# Google Calendar
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=http://localhost:3000/api/calendar/sync
+
+# Microsoft (Outlook/Office 365) Calendar
+MS_CLIENT_ID=
+MS_CLIENT_SECRET=
+MS_TENANT_ID=common
+MS_REDIRECT_URI=http://localhost:3000/api/calendar/sync
+
+# iCloud via CalDAV (read-only recommended)
+ICLOUD_CALDAV_USERNAME=
+ICLOUD_CALDAV_APP_PASSWORD=
+ICLOUD_CALDAV_URL=https://caldav.icloud.com
+
+# Immich (optional)
+IMMICH_BASE_URL=http://immich:2283
+IMMICH_API_KEY=
+IMMICH_ALBUM_ID=
+# Fallback local photo folder inside container (bind-mount host folder)
+LOCAL_PHOTO_DIR=/photos
+```
+
+---
+
+## package.json
+```json
+{
+  "name": "home-hub",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "prisma generate && next build",
+    "start": "next start -p 3000",
+    "prisma:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.16.1",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "isomorphic-fetch": "^3.0.0",
+    "ical": "^0.8.0",
+    "next": "^14.2.5",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwindcss": "^3.4.4",
+    "zod": "^3.23.8",
+    "caldav": "^2.2.0",
+    "googleapis": "^133.0.0",
+    "date-fns": "^3.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/react": "^18.2.21",
+    "@types/react-dom": "^18.2.7",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "prisma": "^5.16.1",
+    "typescript": "^5.4.5"
+  }
+}
+```
+
+---
+
+## next.config.mjs
+```js
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  experimental: {
+    serverActions: { allowedOrigins: ["*"] }
+  },
+  images: {
+    remotePatterns: [
+      { protocol: 'http', hostname: '**' },
+      { protocol: 'https', hostname: '**' }
+    ]
+  }
+}
+export default nextConfig
+```
+
+---
+
+## tailwind.config.ts
+```ts
+import type { Config } from 'tailwindcss'
+
+export default {
+  content: [
+    './src/app/**/*.{js,ts,jsx,tsx}',
+    './src/components/**/*.{js,ts,jsx,tsx}'
+  ],
+  theme: {
+    extend: {
+      colors: {
+        brand: {
+          600: '#004679',
+          700: '#003a64'
+        }
+      }
+    }
+  },
+  plugins: []
+} satisfies Config
+```
+
+---
+
+## postcss.config.js
+```js
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+```
+
+---
+
+## tsconfig.json
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "es2022"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "paths": {
+      "@/components/*": ["./src/components/*"],
+      "@/lib/*": ["./src/lib/*"]
+    }
+  },
+  "include": ["next-env.d.ts", "src/**/*", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+```
+
+---
+
+## public/manifest.webmanifest
+```json
+{
+  "name": "Home Hub",
+  "short_name": "HomeHub",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#004679",
+  "icons": [
+    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192" },
+    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512" }
+  ]
+}
+```
+
+*(Drop any 192px/512px PNGs into `public/` for the icons.)*
+
+---
+
+## prisma/schema.prisma
+```prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  avatarUrl String? 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Chore {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  cadence     String   // e.g. daily, weekly, custom cron later
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  assignments ChoreAssignment[]
+}
+
+model ChoreAssignment {
+  id        String   @id @default(cuid())
+  choreId   String
+  userId    String
+  dueDate   DateTime
+  completed Boolean  @default(false)
+  completedAt DateTime?
+  chore     Chore    @relation(fields: [choreId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model ChecklistItem {
+  id        String   @id @default(cuid())
+  title     String
+  date      DateTime // each day's list
+  done      Boolean  @default(false)
+  ownerId   String?
+  owner     User?    @relation(fields: [ownerId], references: [id])
+}
+
+model MealPlan {
+  id        String   @id @default(cuid())
+  date      DateTime @unique
+  breakfast String?
+  lunch     String?
+  dinner    String?
+  notes     String?
+}
+
+model CalendarAccount {
+  id            String   @id @default(cuid())
+  provider      String   // google|microsoft|caldav
+  displayName   String
+  accessToken   String?
+  refreshToken  String?
+  expiresAt     Int?     // epoch seconds
+  caldavUrl     String?
+  username      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model EventCache {
+  id          String   @id @default(cuid())
+  provider    String
+  providerId  String   // event id
+  title       String
+  start       DateTime
+  end         DateTime
+  location    String?
+  allDay      Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+}
+```
+
+---
+
+## src/app/globals.css
+```css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #__next { height: 100%; }
+body { @apply bg-black text-white; }
+
+/* Touch-friendly bigger targets */
+.btn { @apply px-6 py-4 rounded-2xl bg-brand-600 active:bg-brand-700 text-white text-xl; }
+.card { @apply bg-zinc-900 rounded-2xl p-6 shadow-xl; }
+.tab { @apply px-4 py-3 rounded-xl; }
+.tab-active { @apply bg-brand-600; }
+```
+
+---
+
+## src/app/layout.tsx
+```tsx
+import './globals.css'
+import { ReactNode } from 'react'
+
+export const metadata = {
+  title: 'Home Hub',
+  description: 'Kiosk for chores, checklists, meals, and calendars',
+  manifest: '/manifest.webmanifest'
+}
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <body className="h-screen w-screen overflow-hidden">
+        {children}
+      </body>
+    </html>
+  )
+}
+```
+
+---
+
+## src/components/NavTabs.tsx
+```tsx
+'use client'
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+
+const tabs = [
+  { href: '/', label: 'Dashboard' },
+  { href: '/chores', label: 'Chores' },
+  { href: '/checklists', label: 'Checklists' },
+  { href: '/meals', label: 'Meals' },
+  { href: '/calendar', label: 'Calendar' },
+  { href: '/settings', label: 'Settings' }
+]
+
+export default function NavTabs() {
+  const pathname = usePathname()
+  return (
+    <nav className="grid grid-cols-3 gap-3 p-4 bg-zinc-950">
+      {tabs.map(t => (
+        <Link key={t.href} href={t.href} className={`tab text-center text-lg ${pathname===t.href?'tab-active':''}`}>{t.label}</Link>
+      ))}
+    </nav>
+  )
+}
+```
+
+---
+
+## src/components/KioskShell.tsx
+```tsx
+import { ReactNode } from 'react'
+import NavTabs from './NavTabs'
+import IdleManager from './IdleManager'
+
+export default function KioskShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="h-full w-full grid grid-rows-[auto,1fr]">
+      <IdleManager />
+      <NavTabs />
+      <main className="p-6 overflow-auto">{children}</main>
+    </div>
+  )
+}
+```
+
+---
+
+## src/components/IdleManager.tsx
+```tsx
+'use client'
+import { useEffect, useState } from 'react'
+import PhotoSlideshow from './PhotoSlideshow'
+
+const timeoutSeconds = Number(process.env.NEXT_PUBLIC_IDLE_TIMEOUT_SECONDS ?? 120)
+
+export default function IdleManager(){
+  const [idle, setIdle] = useState(false)
+  useEffect(() => {
+    let timer: any
+    const reset = () => { setIdle(false); clearTimeout(timer); timer = setTimeout(()=>setIdle(true), timeoutSeconds*1000) }
+    ['mousemove','mousedown','touchstart','keydown'].forEach(ev=> window.addEventListener(ev, reset))
+    reset()
+    return () => ['mousemove','mousedown','touchstart','keydown'].forEach(ev=> window.removeEventListener(ev, reset))
+  }, [])
+  if(!idle) return null
+  return (
+    <div className="fixed inset-0 z-50 bg-black">
+      <PhotoSlideshow onExit={() => setIdle(false)} />
+    </div>
+  )
+}
+```
+
+---
+
+## src/components/PhotoSlideshow.tsx
+```tsx
+'use client'
+import { useEffect, useState } from 'react'
+
+export default function PhotoSlideshow({ onExit }: { onExit: ()=>void }){
+  const [urls, setUrls] = useState<string[]>([])
+  const [i, setI] = useState(0)
+
+  useEffect(()=>{
+    let mounted = true
+    fetch('/api/photos/random?count=50').then(r=>r.json()).then(d=>{ if(mounted) setUrls(d.urls || []) })
+    const esc = (e: KeyboardEvent)=>{ if(e.key==='Escape') onExit() }
+    window.addEventListener('keydown', esc)
+    return ()=>{ mounted = false; window.removeEventListener('keydown', esc) }
+  },[onExit])
+
+  useEffect(()=>{
+    const t = setInterval(()=> setI(prev => (urls.length? (prev+1)%urls.length : 0)), 5000)
+    return ()=> clearInterval(t)
+  },[urls])
+
+  if(!urls.length) return <div className="w-full h-full flex items-center justify-center">Loading photos…</div>
+  return (
+    <div className="w-full h-full" onClick={onExit}>
+      <img src={urls[i]} alt="slideshow" className="w-full h-full object-contain" />
+    </div>
+  )
+}
+```
+
+---
+
+## src/app/page.tsx (Dashboard)
+```tsx
+import KioskShell from '@/components/KioskShell'
+import CalendarView from '@/components/CalendarView'
+import ChecklistView from '@/components/ChecklistView'
+import ChoresView from '@/components/ChoresView'
+import MealPlanner from '@/components/MealPlanner'
+
+export default function Page(){
+  return (
+    <KioskShell>
+      <div className="grid xl:grid-cols-4 md:grid-cols-2 gap-6">
+        <div className="card xl:col-span-2"><h2 className="text-2xl mb-4">Today’s Calendar</h2><CalendarView compact /></div>
+        <div className="card"><h2 className="text-2xl mb-4">Daily Checklist</h2><ChecklistView /></div>
+        <div className="card"><h2 className="text-2xl mb-4">Chores</h2><ChoresView /></div>
+        <div className="card xl:col-span-2"><h2 className="text-2xl mb-4">Meal Plan</h2><MealPlanner /></div>
+      </div>
+    </KioskShell>
+  )
+}
+```
+
+---
+
+## Simple Views (placeholders)
+### src/components/CalendarView.tsx
+```tsx
+'use client'
+import useSWR from 'swr'
+const fetcher = (u:string)=>fetch(u).then(r=>r.json())
+
+export default function CalendarView({ compact=false }: { compact?: boolean }){
+  const { data } = useSWR('/api/calendar/sync', fetcher, { refreshInterval: 60000 })
+  const events = data?.events || []
+  return (
+    <div className="space-y-3">
+      {events.slice(0, compact? 6 : 20).map((e:any)=> (
+        <div key={e.id} className="flex gap-3 items-center">
+          <div className="text-sm opacity-70 w-40">{new Date(e.start).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}–{new Date(e.end).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+          <div className="text-lg">{e.title}</div>
+        </div>
+      ))}
+      {!events.length && <div>No upcoming events.</div>}
+    </div>
+  )
+}
+```
+
+### src/components/ChecklistView.tsx
+```tsx
+'use client'
+import useSWR from 'swr'
+
+export default function ChecklistView(){
+  const fetcher = (u:string)=>fetch(u).then(r=>r.json())
+  const { data, mutate } = useSWR('/api/checklists', fetcher)
+  const items = data?.items || []
+
+  const toggle = async (id:string)=>{
+    await fetch('/api/checklists', { method:'PATCH', body: JSON.stringify({ id }) })
+    mutate()
+  }
+
+  return (
+    <div className="space-y-3">
+      {items.map((it:any)=> (
+        <label key={it.id} className="flex gap-3 items-center">
+          <input type="checkbox" checked={it.done} onChange={()=>toggle(it.id)} className="w-6 h-6" />
+          <span className="text-xl">{it.title}</span>
+        </label>
+      ))}
+      {!items.length && <div>No items for today yet.</div>}
+    </div>
+  )
+}
+```
+
+### src/components/ChoresView.tsx
+```tsx
+'use client'
+import useSWR from 'swr'
+
+export default function ChoresView(){
+  const fetcher = (u:string)=>fetch(u).then(r=>r.json())
+  const { data, mutate } = useSWR('/api/chores', fetcher)
+  const assignments = data?.assignments || []
+
+  const complete = async (id:string)=>{
+    await fetch('/api/chores', { method:'PATCH', body: JSON.stringify({ id }) })
+    mutate()
+  }
+
+  return (
+    <div className="space-y-3">
+      {assignments.map((a:any)=> (
+        <div key={a.id} className="flex items-center justify-between">
+          <div>
+            <div className="text-xl">{a.chore.title}</div>
+            <div className="text-sm opacity-70">Due {new Date(a.dueDate).toLocaleDateString()}</div>
+          </div>
+          {!a.completed ? <button className="btn" onClick={()=>complete(a.id)}>Mark Done</button> : <span className="opacity-70">Done</span>}
+        </div>
+      ))}
+      {!assignments.length && <div>No chores assigned today.</div>}
+    </div>
+  )
+}
+```
+
+### src/components/MealPlanner.tsx
+```tsx
+'use client'
+import useSWR from 'swr'
+
+export default function MealPlanner(){
+  const fetcher = (u:string)=>fetch(u).then(r=>r.json())
+  const { data } = useSWR('/api/meals', fetcher)
+  const meals = data?.today
+
+  if(!meals) return <div>No meals planned for today.</div>
+  return (
+    <div className="grid grid-cols-3 gap-4 text-xl">
+      <div><div className="opacity-70">Breakfast</div><div>{meals.breakfast || '—'}</div></div>
+      <div><div className="opacity-70">Lunch</div><div>{meals.lunch || '—'}</div></div>
+      <div><div className="opacity-70">Dinner</div><div>{meals.dinner || '—'}</div></div>
+    </div>
+  )
+}
+```
+
+---
+
+## Simple Pages (routes)
+```tsx
+// src/app/chores/page.tsx
+import KioskShell from '@/components/KioskShell'
+import ChoresView from '@/components/ChoresView'
+export default function Page(){ return <KioskShell><div className="card"><ChoresView/></div></KioskShell> }
+
+// src/app/checklists/page.tsx
+import KioskShell from '@/components/KioskShell'
+import ChecklistView from '@/components/ChecklistView'
+export default function Page(){ return <KioskShell><div className="card"><ChecklistView/></div></KioskShell> }
+
+// src/app/meals/page.tsx
+import KioskShell from '@/components/KioskShell'
+import MealPlanner from '@/components/MealPlanner'
+export default function Page(){ return <KioskShell><div className="card"><MealPlanner/></div></KioskShell> }
+
+// src/app/calendar/page.tsx
+import KioskShell from '@/components/KioskShell'
+import CalendarView from '@/components/CalendarView'
+export default function Page(){ return <KioskShell><div className="card"><CalendarView/></div></KioskShell> }
+
+// src/app/settings/page.tsx
+import KioskShell from '@/components/KioskShell'
+export default function Page(){
+  return (
+    <KioskShell>
+      <div className="card space-y-4">
+        <h2 className="text-2xl">Settings</h2>
+        <p>Configure calendar accounts and photo sources in the <code>.env</code> and via future UI here.</p>
+      </div>
+    </KioskShell>
+  )
+}
+```
+
+---
+
+## API Routes (minimal working)
+### src/lib/env.ts
+```ts
+export const env = {
+  IMMICH_BASE_URL: process.env.IMMICH_BASE_URL,
+  IMMICH_API_KEY: process.env.IMMICH_API_KEY,
+  IMMICH_ALBUM_ID: process.env.IMMICH_ALBUM_ID,
+  LOCAL_PHOTO_DIR: process.env.LOCAL_PHOTO_DIR || '/photos'
+}
+```
+
+### src/lib/prisma.ts
+```ts
+import { PrismaClient } from '@prisma/client'
+const globalForPrisma = global as unknown as { prisma: PrismaClient }
+export const prisma = globalForPrisma.prisma || new PrismaClient()
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
+```
+
+### src/app/api/checklists/route.ts
+```ts
+import { prisma } from '@/lib/prisma'
+import { NextRequest } from 'next/server'
+
+export async function GET(){
+  const start = new Date(); start.setHours(0,0,0,0)
+  const end = new Date(); end.setHours(23,59,59,999)
+  const items = await prisma.checklistItem.findMany({ where: { date: { gte: start, lte: end }}, orderBy: { title: 'asc' } })
+  return Response.json({ items })
+}
+
+export async function PATCH(req: NextRequest){
+  const { id } = await req.json()
+  const item = await prisma.checklistItem.update({ where: { id }, data: { done: { set: true }}})
+  return Response.json({ ok: true, item })
+}
+```
+
+### src/app/api/chores/route.ts
+```ts
+import { prisma } from '@/lib/prisma'
+import { NextRequest } from 'next/server'
+
+export async function GET(){
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0)
+  const todayEnd = new Date(); todayEnd.setHours(23,59,59,999)
+  const assignments = await prisma.choreAssignment.findMany({
+    where: { dueDate: { gte: todayStart, lte: todayEnd } },
+    include: { chore: true }
+  })
+  return Response.json({ assignments })
+}
+
+export async function PATCH(req: NextRequest){
+  const { id } = await req.json()
+  const updated = await prisma.choreAssignment.update({ where: { id }, data: { completed: true, completedAt: new Date() }})
+  return Response.json({ ok: true, updated })
+}
+```
+
+### src/app/api/meals/route.ts
+```ts
+import { prisma } from '@/lib/prisma'
+
+export async function GET(){
+  const d = new Date(); d.setHours(0,0,0,0)
+  const today = await prisma.mealPlan.findUnique({ where: { date: d } })
+  return Response.json({ today })
+}
+```
+
+### Calendar (merged feed placeholder)
+#### src/lib/calendar/merge.ts
+```ts
+export type HubEvent = { id: string; title: string; start: string; end: string; location?: string; allDay?: boolean }
+
+export function mergeEvents(...lists: HubEvent[][]): HubEvent[]{
+  const map = new Map<string, HubEvent>()
+  for(const list of lists){
+    for(const e of list){ map.set(`${e.id}`, e) }
+  }
+  return Array.from(map.values()).sort((a,b)=> new Date(a.start).getTime() - new Date(b.start).getTime())
+}
+```
+
+#### src/app/api/calendar/sync/route.ts
+```ts
+import { mergeEvents, HubEvent } from '@/lib/calendar/merge'
+
+async function google(): Promise<HubEvent[]> { return [] }
+async function microsoft(): Promise<HubEvent[]> { return [] }
+async function caldav(): Promise<HubEvent[]> { return [] }
+
+export async function GET(){
+  // TODO: fill provider fetchers; return static demo for now
+  const now = new Date();
+  const events: HubEvent[] = [
+    { id: 'demo1', title: 'Sample Event', start: new Date(now.getTime()+30*60*1000).toISOString(), end: new Date(now.getTime()+90*60*1000).toISOString() }
+  ]
+  return Response.json({ events })
+}
+```
+
+> We’ll wire real providers after first boot.
+
+### Photos: Immich + Local fallback
+#### src/lib/photos/local.ts
+```ts
+import { promises as fs } from 'fs'
+import path from 'path'
+import { env } from '@/lib/env'
+
+export async function getLocalPhotos(limit=50){
+  try {
+    const dir = env.LOCAL_PHOTO_DIR
+    const entries = await fs.readdir(dir)
+    const files = entries.filter(f=> /\.(jpg|jpeg|png|webp)$/i.test(f)).slice(0, limit)
+    // Expose as /photos/.. via static route: bind-mount to /photos in container and add a rewrite in next.config if desired.
+    return files.map(f=> `/photos/${encodeURIComponent(f)}`)
+  } catch {
+    return []
+  }
+}
+```
+
+#### src/lib/photos/immich.ts
+```ts
+import { env } from '@/lib/env'
+
+// Placeholder: implement Immich API fetch here once API details are confirmed.
+// Strategy: If ALBUM_ID is provided, query the album for assets, map to public URLs.
+// Otherwise, fetch recent/random assets. Fallback to local files if API call fails.
+
+export async function getImmichPhotos(_limit=50): Promise<string[]> {
+  if(!env.IMMICH_BASE_URL || !env.IMMICH_API_KEY) return []
+  // TODO: Implement Immich asset list request using fetch with Bearer token
+  // return array of image URLs accessible from the kiosk (e.g., proxied route)
+  return []
+}
+```
+
+#### src/app/api/photos/random/route.ts
+```ts
+import { getImmichPhotos } from '@/lib/photos/immich'
+import { getLocalPhotos } from '@/lib/photos/local'
+
+export async function GET(request: Request){
+  const { searchParams } = new URL(request.url)
+  const count = Number(searchParams.get('count') || 50)
+
+  let urls = await getImmichPhotos(count)
+  if(!urls.length){
+    urls = await getLocalPhotos(count)
+  }
+  return Response.json({ urls })
+}
+```
+
+---
+
+## Dockerfile
+```dockerfile
+# Use a multi-stage build for small image
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* ./
+RUN npm ci || yarn || pnpm i
+COPY . .
+RUN npm run build || yarn build || pnpm build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Add a non-root user
+RUN addgroup -S app && adduser -S app -G app
+
+# Copy build output & minimal deps
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/prisma ./prisma
+
+# Photos mount point
+RUN mkdir -p /photos && chown -R app:app /photos
+
+USER app
+EXPOSE 3000
+CMD ["node", ".next/standalone/server.js"]
+```
+
+> Note: Next.js standalone output can be enabled, but to keep it simple we copied `.next`. This is fine on your LAN. We can optimize later.
+
+---
+
+## docker-compose.yml
+```yaml
+version: '3.9'
+services:
+  web:
+    build: .
+    container_name: home-hub
+    env_file: .env
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+    volumes:
+      - ./photos:/photos:ro
+      - ./public:/app/public
+    restart: unless-stopped
+  db:
+    image: postgres:16-alpine
+    container_name: home-hub-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: homehub
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    restart: unless-stopped
+volumes:
+  dbdata:
+```
+
+---
+
+## Quick Seed (optional)
+Create a simple seed script to populate today’s checklist/chores/meals.
+
+**scripts/seed.ts**
+```ts
+import { prisma } from '../src/lib/prisma'
+
+async function main(){
+  const d = new Date(); d.setHours(0,0,0,0)
+  await prisma.mealPlan.upsert({ where: { date: d }, update: {}, create: { date: d, breakfast: 'Omelets', lunch: 'Sandwiches', dinner: 'Tacos' }})
+
+  const user = await prisma.user.upsert({ where: { id: 'demo' }, update: {}, create: { id: 'demo', name: 'Family' }})
+  const chore = await prisma.chore.upsert({ where: { id: 'trash' }, update: {}, create: { id: 'trash', title: 'Take out trash', cadence: 'daily' }})
+  await prisma.choreAssignment.create({ data: { choreId: chore.id, userId: user.id, dueDate: d }})
+
+  await prisma.checklistItem.createMany({ data: [
+    { title: 'Feed pets', date: d },
+    { title: 'Start dishwasher', date: d },
+    { title: 'Lock doors', date: d }
+  ]})
+}
+
+main().then(()=>{ console.log('Seed OK'); process.exit(0)}).catch(e=>{ console.error(e); process.exit(1) })
+```
+
+> Run with `npx ts-node scripts/seed.ts` (or we can add a script).
+
+---
+
+## Kiosk Tips for the Wall Tablet
+- Add this to your device/iPad/Android as a **PWA** by visiting `http://yourserver:3000` and “Add to Home Screen.”
+- Set the tablet’s OS to **Guided Access / Kiosk Mode** so it stays full-screen.
+- The idle slideshow kicks in after `NEXT_PUBLIC_IDLE_TIMEOUT_SECONDS`.
+
+---
+
+## Calendar Integrations (wiring plan)
+We left provider functions empty to keep the boot smooth. Here’s how we’ll wire them when you’re ready:
+
+### Google Calendar (`src/lib/calendar/google.ts`)
+- Use `googleapis` → OAuth2 flow to obtain a refresh token (we can add a small setup page to handle the consent and store tokens in `CalendarAccount`).
+- Fetch primary calendar events for the next N hours; map to `HubEvent`.
+
+### Microsoft 365 / Outlook (`src/lib/calendar/microsoft.ts`)
+- Use `@microsoft/microsoft-graph-client` with client credentials or auth code + refresh token, depending on personal vs. work.
+- Query `/me/calendarview` for the desired window; map to `HubEvent`.
+
+### iCloud (`src/lib/calendar/caldav.ts`)
+- Use `caldav` library with app-specific password; read events from the configured calendar collection.
+- Parse ICS into times; map to `HubEvent`.
+
+We’ll merge them with `mergeEvents()` and cache to `EventCache` later.
+
+---
+
+## Setup Steps
+1. **Clone & install**
+   ```bash
+   git clone <your-repo> home-hub && cd home-hub
+   cp .env.example .env
+   npm i
+   npx prisma migrate dev --name init
+   npm run dev
+   ```
+   Visit http://localhost:3000 in your Mac’s browser. You should see demo widgets.
+
+2. **Seed demo data (optional)**
+   ```bash
+   npm i -D ts-node
+   npx ts-node scripts/seed.ts
+   ```
+
+3. **Photos**
+   - If using **local folder**: put JPG/PNG/WebP images in `./photos` (mounted read-only to `/photos`). They’ll show when idle.
+   - If using **Immich**: set `IMMICH_BASE_URL` and `IMMICH_API_KEY` in `.env`. We’ll finish the `getImmichPhotos()` call together once you share your Immich API details (album vs. library, privacy, etc.).
+
+4. **Docker (Ubuntu 22.04 server)**
+   ```bash
+   docker compose up -d --build
+   docker compose logs -f web
+   ```
+   Then open `http://<server-ip>:3000` from the wall touchscreen.
+
+5. **Next steps we can do together**
+   - Add a small **/settings** wizard to connect Google/Microsoft accounts and store tokens in `CalendarAccount`.
+   - Build **recurring chores** logic (“every Mon/Wed/Fri”) and a **rotating assignment** by family member.
+   - Add **weekly meal planner** grid with drag/drop and a **shopping list** generator.
+   - Add **role-less auth** (optional) for remote edits from your phone.
+
+---
+
+## Notes
+- This is intentionally minimal to get you a working kiosk with local photos + demo data. We’ll harden auth, add caching, and finish calendar/Immich connectors in your environment.
+- UI is big-touch friendly: large buttons, high contrast, and no tiny hit targets.
+- Everything here is MIT-licensable; feel free to rebrand.

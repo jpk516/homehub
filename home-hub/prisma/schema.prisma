@@ -1,0 +1,80 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  avatarUrl String? 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Chore {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  cadence     String   // e.g. daily, weekly, custom cron later
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  assignments ChoreAssignment[]
+}
+
+model ChoreAssignment {
+  id        String   @id @default(cuid())
+  choreId   String
+  userId    String
+  dueDate   DateTime
+  completed Boolean  @default(false)
+  completedAt DateTime?
+  chore     Chore    @relation(fields: [choreId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model ChecklistItem {
+  id        String   @id @default(cuid())
+  title     String
+  date      DateTime // each day's list
+  done      Boolean  @default(false)
+  ownerId   String?
+  owner     User?    @relation(fields: [ownerId], references: [id])
+}
+
+model MealPlan {
+  id        String   @id @default(cuid())
+  date      DateTime @unique
+  breakfast String?
+  lunch     String?
+  dinner    String?
+  notes     String?
+}
+
+model CalendarAccount {
+  id            String   @id @default(cuid())
+  provider      String   // google|microsoft|caldav
+  displayName   String
+  accessToken   String?
+  refreshToken  String?
+  expiresAt     Int?     // epoch seconds
+  caldavUrl     String?
+  username      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model EventCache {
+  id          String   @id @default(cuid())
+  provider    String
+  providerId  String   // event id
+  title       String
+  start       DateTime
+  end         DateTime
+  location    String?
+  allDay      Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+}

@@ -1,8 +1,8 @@
-import KioskShell from '@/components/KioskShell'
-import CalendarView from '@/components/CalendarView'
-import ChecklistView from '@/components/ChecklistView'
-import ChoresView from '@/components/ChoresView'
-import MealPlanner from '@/components/MealPlanner'
+import KioskShell from '../components/KioskShell'
+import CalendarView from '../components/CalendarView'
+import ChecklistView from '../components/ChecklistView'
+import ChoresView from '../components/ChoresView'
+import MealPlanner from '../components/MealPlanner'
 
 export default function Page(){
   return (
